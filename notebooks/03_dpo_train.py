@@ -66,6 +66,22 @@ import torch
 
 assert torch.cuda.is_available(), "DPO needs a CUDA GPU. See HARDWARE-GUIDE.md."
 
+CHATML_FALLBACK_TEMPLATE = """{% for message in messages %}{% if message['role'] == 'system' %}<|im_start|>system
+{{ message['content'] }}<|im_end|>
+{% elif message['role'] == 'user' %}<|im_start|>user
+{{ message['content'] }}<|im_end|>
+{% elif message['role'] == 'assistant' %}<|im_start|>assistant
+{{ message['content'] }}<|im_end|>
+{% endif %}{% endfor %}{% if add_generation_prompt %}<|im_start|>assistant
+{% endif %}"""
+
+
+def ensure_chat_template(tokenizer):
+    if getattr(tokenizer, "chat_template", None):
+        return
+    tokenizer.chat_template = CHATML_FALLBACK_TEMPLATE
+    print("Set tokenizer.chat_template = fallback ChatML")
+
 # %% [markdown]
 # ## 1. Load policy + reference (the VRAM story)
 #
@@ -76,18 +92,21 @@ assert torch.cuda.is_available(), "DPO needs a CUDA GPU. See HARDWARE-GUIDE.md."
 # sequences, not from a second copy of the weights.
 
 # %%
-from unsloth import FastLanguageModel
-from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from peft import PeftModel, prepare_model_for_kbit_training
+
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_use_double_quant=True,
+    bnb_4bit_compute_dtype=torch.float16,
+)
 
 # Policy — gets new DPO LoRA adapter on top of SFT LoRA
-model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name=BASE_MODEL,
-    max_seq_length=MAX_LEN,
-    dtype=None,
-    load_in_4bit=True,
-)
+tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
+ensure_chat_template(tokenizer)
 
 # Load SFT adapter on top of base
 model = PeftModel.from_pretrained(model, str(SFT_PATH), is_trainable=True)
@@ -134,7 +153,7 @@ dpo_config = DPOConfig(
     beta=BETA,
     max_length=MAX_LEN,
     max_prompt_length=MAX_PROMPT_LEN,
-    warmup_ratio=0.1,
+    warmup_steps=10,
     lr_scheduler_type="cosine",
     logging_steps=10,
     save_strategy="no",
@@ -143,6 +162,8 @@ dpo_config = DPOConfig(
     fp16=not torch.cuda.is_bf16_supported(),
     seed=42,
     loss_type="sigmoid",         # DPO standard (alternatives: ipo, hinge, kto)
+    dataset_num_proc=1,          # Avoid Colab/Python 3.12 pickling crashes in Unsloth preprocessing
+    padding_free=False,          # xFormers backend in Colab does not support Unsloth padding-free path reliably
     report_to="none",
 )
 

@@ -60,6 +60,21 @@ import torch
 
 assert torch.cuda.is_available(), "Need GPU for generation"
 
+CHATML_FALLBACK_TEMPLATE = """{% for message in messages %}{% if message['role'] == 'system' %}<|im_start|>system
+{{ message['content'] }}<|im_end|>
+{% elif message['role'] == 'user' %}<|im_start|>user
+{{ message['content'] }}<|im_end|>
+{% elif message['role'] == 'assistant' %}<|im_start|>assistant
+{{ message['content'] }}<|im_end|>
+{% endif %}{% endfor %}{% if add_generation_prompt %}<|im_start|>assistant
+{% endif %}"""
+
+
+def ensure_chat_template(tokenizer):
+    if getattr(tokenizer, "chat_template", None):
+        return
+    tokenizer.chat_template = CHATML_FALLBACK_TEMPLATE
+
 # %% [markdown]
 # ## 1. Helper — generate with a specified adapter
 
@@ -79,6 +94,7 @@ def generate_with_adapter(adapter_path: Path, prompts: list[dict], max_new_token
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    ensure_chat_template(tokenizer)
 
     model = PeftModel.from_pretrained(model, str(adapter_path))
     FastLanguageModel.for_inference(model)

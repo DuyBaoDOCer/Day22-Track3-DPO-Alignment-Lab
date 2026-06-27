@@ -43,6 +43,9 @@ esac
 # Colab pre-installs torch + transformers; let pip resolve compatible versions.
 # Unsloth's installer picks the right CUDA wheel.
 pip install -q -r requirements.txt
+# sentence-transformers pulls torchcodec in newer environments; that breaks
+# `import unsloth` in current Colab images even though this lab doesn't need it.
+pip uninstall -y sentence-transformers torchcodec >/dev/null 2>&1 || true
 
 if [ "$TIER" = "BIGGPU" ]; then
   echo "[colab] Installing BigGPU extras (vllm, flash-attn) — may take 3-5 min"

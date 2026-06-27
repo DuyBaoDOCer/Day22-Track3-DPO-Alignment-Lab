@@ -41,7 +41,7 @@ else:  # BIGGPU
     PER_DEVICE_BATCH = 2
     GRAD_ACCUM = 4
 
-SFT_DATASET = os.environ.get("SFT_DATASET", "5CD-AI/Vietnamese-alpaca-cleaned")
+SFT_DATASET = os.environ.get("SFT_DATASET", "yahma/alpaca-cleaned")
 SFT_SLICE = 1000
 NUM_EPOCHS = 1
 
@@ -62,6 +62,22 @@ import torch
 assert torch.cuda.is_available(), "DPO needs a CUDA GPU. See HARDWARE-GUIDE.md."
 gpu = torch.cuda.get_device_properties(0)
 print(f"GPU: {gpu.name}  ({gpu.total_memory / 1e9:.1f} GB)")
+
+CHATML_FALLBACK_TEMPLATE = """{% for message in messages %}{% if message['role'] == 'system' %}<|im_start|>system
+{{ message['content'] }}<|im_end|>
+{% elif message['role'] == 'user' %}<|im_start|>user
+{{ message['content'] }}<|im_end|>
+{% elif message['role'] == 'assistant' %}<|im_start|>assistant
+{{ message['content'] }}<|im_end|>
+{% endif %}{% endfor %}{% if add_generation_prompt %}<|im_start|>assistant
+{% endif %}"""
+
+
+def ensure_chat_template(tokenizer):
+    if getattr(tokenizer, "chat_template", None):
+        return
+    tokenizer.chat_template = CHATML_FALLBACK_TEMPLATE
+    print("Set tokenizer.chat_template = fallback ChatML")
 
 # %% [markdown]
 # ## 1. Load base model with Unsloth
@@ -84,6 +100,7 @@ model, tokenizer = FastLanguageModel.from_pretrained(
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
     print("Set tokenizer.pad_token = eos_token")
+ensure_chat_template(tokenizer)
 
 # %%
 model = FastLanguageModel.get_peft_model(
@@ -106,8 +123,9 @@ print(f"Trainable params: {sum(p.numel() for p in model.parameters() if p.requir
 # %% [markdown]
 # ## 2. Load + format VN Alpaca slice
 #
-# `5CD-AI/Vietnamese-alpaca-cleaned` is a 50k-row VN Alpaca translation. Lab 21
-# uses 1k slice for the demo run; we match that exactly so reward gap is comparable.
+# The original VN Alpaca dataset referenced by the lab is no longer reliably
+# available on the Hub. Use `yahma/alpaca-cleaned` as the stable default fallback.
+# If you have a preferred Vietnamese Alpaca mirror, set `SFT_DATASET` in `.env`.
 
 # %%
 from datasets import load_dataset
@@ -146,7 +164,7 @@ sft_config = SFTConfig(
     gradient_accumulation_steps=GRAD_ACCUM,
     num_train_epochs=NUM_EPOCHS,
     learning_rate=2e-4,
-    warmup_ratio=0.03,
+    warmup_steps=10,
     lr_scheduler_type="cosine",
     logging_steps=10,
     save_strategy="no",        # Save only at the end via trainer.model.save_pretrained
@@ -156,6 +174,8 @@ sft_config = SFTConfig(
     seed=42,
     max_length=MAX_LEN,
     dataset_text_field="text",
+    dataset_num_proc=1,        # Avoid Colab/Python 3.12 pickling crashes in Unsloth tokenization
+    padding_free=False,        # xFormers backend in Colab does not support Unsloth padding-free path reliably
     report_to="none",
 )
 

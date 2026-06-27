@@ -60,8 +60,25 @@ from transformers import AutoTokenizer
 
 assert ADAPTER_DIR.exists(), f"NB1 must run first — {ADAPTER_DIR} missing"
 tokenizer = AutoTokenizer.from_pretrained(ADAPTER_DIR)
+CHATML_FALLBACK_TEMPLATE = """{% for message in messages %}{% if message['role'] == 'system' %}<|im_start|>system
+{{ message['content'] }}<|im_end|>
+{% elif message['role'] == 'user' %}<|im_start|>user
+{{ message['content'] }}<|im_end|>
+{% elif message['role'] == 'assistant' %}<|im_start|>assistant
+{{ message['content'] }}<|im_end|>
+{% endif %}{% endfor %}{% if add_generation_prompt %}<|im_start|>assistant
+{% endif %}"""
+
+
+def ensure_chat_template(tokenizer):
+    if getattr(tokenizer, "chat_template", None):
+        return
+    tokenizer.chat_template = CHATML_FALLBACK_TEMPLATE
+    print("Set tokenizer.chat_template = fallback ChatML")
+
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
+ensure_chat_template(tokenizer)
 print(f"Tokenizer: {tokenizer.__class__.__name__}  vocab={tokenizer.vocab_size:,}")
 
 # %% [markdown]

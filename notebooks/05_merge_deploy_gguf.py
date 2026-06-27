@@ -52,6 +52,21 @@ import torch
 
 assert torch.cuda.is_available()
 
+CHATML_FALLBACK_TEMPLATE = """{% for message in messages %}{% if message['role'] == 'system' %}<|im_start|>system
+{{ message['content'] }}<|im_end|>
+{% elif message['role'] == 'user' %}<|im_start|>user
+{{ message['content'] }}<|im_end|>
+{% elif message['role'] == 'assistant' %}<|im_start|>assistant
+{{ message['content'] }}<|im_end|>
+{% endif %}{% endfor %}{% if add_generation_prompt %}<|im_start|>assistant
+{% endif %}"""
+
+
+def ensure_chat_template(tokenizer):
+    if getattr(tokenizer, "chat_template", None):
+        return
+    tokenizer.chat_template = CHATML_FALLBACK_TEMPLATE
+
 # %% [markdown]
 # ## 1. Load DPO model + merge adapter
 
@@ -67,6 +82,7 @@ model, tokenizer = FastLanguageModel.from_pretrained(
 )
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
+ensure_chat_template(tokenizer)
 
 # Stack SFT-mini → DPO adapters
 SFT_PATH = REPO_ROOT / "adapters" / "sft-mini"
